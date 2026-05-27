@@ -524,27 +524,55 @@ function PlayView({ token, onBack, onLogin }) {
     if (!selectedDevice) {
       await fetchDevices();
     }
+    setScanning(true); // setar primeiro para o <video> existir no DOM
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } });
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: { ideal: "environment" } },
+        audio: false,
+      });
       streamRef.current = stream;
-      if (videoRef.current) {
-        videoRef.current.srcObject = stream;
-        videoRef.current.setAttribute("playsinline", "true");
-        await videoRef.current.play();
+
+      // Esperar um tick para o <video> estar montado
+      await new Promise(r => setTimeout(r, 50));
+
+      const video = videoRef.current;
+      if (!video) {
+        setError("Erro: elemento de vídeo não encontrado.");
+        return;
       }
-      setScanning(true);
+
+      video.setAttribute("playsinline", "true");
+      video.setAttribute("autoplay", "true");
+      video.muted = true;
+      video.srcObject = stream;
+
+      // Esperar metadata para garantir que o vídeo tem dimensões
+      await new Promise((resolve) => {
+        if (video.readyState >= 1) resolve();
+        else video.onloadedmetadata = () => resolve();
+      });
+
+      try {
+        await video.play();
+      } catch (playErr) {
+        // Alguns browsers requerem interação do utilizador
+        console.warn("Play falhou, a tentar mesmo assim:", playErr);
+      }
 
       const jsQR = (await import("https://esm.sh/jsqr@1.4.0")).default;
       const tick = () => {
         if (!videoRef.current || !canvasRef.current) return;
-        if (videoRef.current.readyState === videoRef.current.HAVE_ENOUGH_DATA) {
+        const v = videoRef.current;
+        if (v.readyState === v.HAVE_ENOUGH_DATA && v.videoWidth > 0) {
           const canvas = canvasRef.current;
-          canvas.width = videoRef.current.videoWidth;
-          canvas.height = videoRef.current.videoHeight;
+          canvas.width = v.videoWidth;
+          canvas.height = v.videoHeight;
           const ctx = canvas.getContext("2d");
-          ctx.drawImage(videoRef.current, 0, 0, canvas.width, canvas.height);
+          ctx.drawImage(v, 0, 0, canvas.width, canvas.height);
           const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-          const code = jsQR(imageData.data, imageData.width, imageData.height);
+          const code = jsQR(imageData.data, imageData.width, imageData.height, {
+            inversionAttempts: "dontInvert",
+          });
           if (code) {
             const trackId = extractTrackId(code.data);
             if (trackId) {
@@ -558,7 +586,14 @@ function PlayView({ token, onBack, onLogin }) {
       };
       scanFrameRef.current = requestAnimationFrame(tick);
     } catch (e) {
-      setError("Não consegui aceder à câmara: " + e.message);
+      setScanning(false);
+      if (e.name === "NotAllowedError") {
+        setError("Permissão da câmara negada. Vai a Definições do Safari → discoteca-ochre.vercel.app → ativa a câmara.");
+      } else if (e.name === "NotFoundError") {
+        setError("Não foi encontrada nenhuma câmara neste dispositivo.");
+      } else {
+        setError("Não consegui aceder à câmara: " + e.message);
+      }
     }
   };
 
