@@ -492,7 +492,7 @@ function GenerateView({ token, onBack, onLogin }) {
                     <div class="info-label">EVENT</div>
                     <div class="info-value">DISCOTECA · VOL. 1</div>
                     <div class="info-label">VENUE</div>
-                    <div class="info-value">N.º ${String(idx + 1).padStart(3, "0")}</div>
+                    <div class="info-value">COIMBRA</div>
                   </div>
                   <div class="info-col">
                     <div class="info-label">SECTION</div>
@@ -538,13 +538,13 @@ function GenerateView({ token, onBack, onLogin }) {
                     <div>TECA</div>
                   </div>
                   <div class="stub-vertical">
-                    NO. ${String(idx + 1).padStart(3, "0")} · ADMIT ONE
+                    ADMIT ONE
                   </div>
                   <div class="stub-year">${escapeHTML(String(t.year))}</div>
                 </div>
                 <div class="ticket-main">
                   <div class="back-top">
-                    <span class="back-top-left">SCOTECA</span>
+                    <span class="back-top-left">DISCOTECA</span>
                     <span class="back-top-right">♪ FAIXA</span>
                   </div>
                   <div class="year-section">
