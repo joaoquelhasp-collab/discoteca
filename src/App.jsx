@@ -454,32 +454,229 @@ function GenerateView({ token, onBack, onLogin }) {
       const marginX = (pageW - cols * cardW) / 2;
       const marginY = (pageH - rows * cardH) / 2;
 
-      // Linhas de corte (pequenas marcas nos cantos das cartas para guiar o corte)
+      // Paleta inspirada no design
+      const COLOR_BG = [240, 230, 205];        // bege ticket
+      const COLOR_DARK = [25, 22, 20];         // preto/castanho escuro
+      const COLOR_RED = [180, 70, 50];         // laranja-tijolo
+      const COLOR_BLUE = [80, 110, 150];       // azul descolorado
+      const COLOR_INK = [40, 35, 30];          // tinta dos textos
+
+      function fillRect(p, x, y, w, h, color) {
+        p.setFillColor(...color);
+        p.rect(x, y, w, h, "F");
+      }
+
+      // Marcas de corte discretas nos cantos das cartas
       function drawCutMarks(p, x, y, w, h) {
-        p.setDrawColor(180);
+        p.setDrawColor(120, 100, 80);
         p.setLineWidth(0.1);
-        const len = 3;
-        // 4 cantos: linha horizontal e vertical curtas
-        // canto superior esquerdo
-        p.line(x - len, y, x, y);
-        p.line(x, y - len, x, y);
-        // canto superior direito
-        p.line(x + w, y, x + w + len, y);
-        p.line(x + w, y - len, x + w, y);
-        // canto inferior esquerdo
-        p.line(x - len, y + h, x, y + h);
-        p.line(x, y + h, x, y + h + len);
-        // canto inferior direito
-        p.line(x + w, y + h, x + w + len, y + h);
-        p.line(x + w, y + h, x + w + len, y + h);
-        p.line(x + w, y + h, x + w, y + h + len);
+        const len = 2.5;
+        const off = 0.5;
+        // 4 cantos: pequenas linhas externas para guiar o corte
+        p.line(x - len, y - off, x - off, y - off);
+        p.line(x - off, y - len, x - off, y - off);
+        p.line(x + w + off, y - off, x + w + len, y - off);
+        p.line(x + w + off, y - len, x + w + off, y - off);
+        p.line(x - len, y + h + off, x - off, y + h + off);
+        p.line(x - off, y + h + off, x - off, y + h + len);
+        p.line(x + w + off, y + h + off, x + w + len, y + h + off);
+        p.line(x + w + off, y + h + off, x + w + off, y + h + len);
+      }
+
+      // "Código de barras" decorativo (linhas pretas verticais aleatórias mas determinísticas)
+      function drawBarcode(p, x, y, w, h, seed) {
+        p.setFillColor(...COLOR_DARK);
+        let cursor = x;
+        let rng = seed;
+        const next = () => { rng = (rng * 9301 + 49297) % 233280; return rng / 233280; };
+        while (cursor < x + w) {
+          const barW = 0.25 + next() * 0.6;
+          const gap = 0.2 + next() * 0.5;
+          if (cursor + barW > x + w) break;
+          p.rect(cursor, y, barW, h, "F");
+          cursor += barW + gap;
+        }
+      }
+
+      // Desenha a carta-frente (estilo "bilhete" com QR ao centro)
+      async function drawFrontCard(p, x, y, t, indexNum) {
+        // Fundo bege com bordas arredondadas (simuladas com rect normal + cantos brancos)
+        fillRect(p, x, y, cardW, cardH, COLOR_BG);
+
+        // Borda interna fina escura
+        p.setDrawColor(...COLOR_DARK);
+        p.setLineWidth(0.3);
+        p.rect(x + 2, y + 2, cardW - 4, cardH - 4);
+
+        // Topo: "— ADMISSION TICKET —"
+        p.setFont("helvetica", "normal");
+        p.setFontSize(6);
+        p.setTextColor(...COLOR_INK);
+        p.text("— ADMISSION TICKET —", x + cardW / 2, y + 7, { align: "center" });
+
+        // Título grande "DISCOTECA" em duas linhas
+        p.setFont("helvetica", "bold");
+        p.setFontSize(18);
+        p.setTextColor(...COLOR_DARK);
+        p.text("DISCO", x + cardW / 2, y + 17, { align: "center" });
+        p.text("TECA", x + cardW / 2, y + 24, { align: "center" });
+
+        // QR code centrado
+        const qrUrl = `https://open.spotify.com/track/${t.id}`;
+        const qrDataURL = await QRCode.toDataURL(qrUrl, {
+          width: 500,
+          margin: 1,
+          color: { dark: "#191614", light: "#F0E6CD" },
+        });
+        const qrSize = 28;
+        p.addImage(qrDataURL, "PNG", x + (cardW - qrSize) / 2, y + 30, qrSize, qrSize);
+
+        // Carimbo "ADMIT • ONE" inclinado por baixo do QR
+        const stampX = x + cardW / 2;
+        const stampY = y + 65;
+        p.saveGraphicsState && p.saveGraphicsState();
+        // Caixa do carimbo (não dá para rodar facilmente em jspdf sem transforms; faz reto)
+        p.setDrawColor(...COLOR_RED);
+        p.setLineWidth(0.5);
+        p.rect(stampX - 14, stampY - 3.5, 28, 7);
+        p.setFont("helvetica", "bold");
+        p.setFontSize(8);
+        p.setTextColor(...COLOR_RED);
+        p.text("ADMIT • ONE", stampX, stampY + 1, { align: "center" });
+        p.restoreGraphicsState && p.restoreGraphicsState();
+
+        // Info no fundo (event / section)
+        p.setFont("helvetica", "normal");
+        p.setFontSize(4.5);
+        p.setTextColor(120, 100, 80);
+        p.text("EVENT", x + 5, y + 75);
+        p.text("SECTION", x + cardW / 2 + 2, y + 75);
+        p.setFont("helvetica", "bold");
+        p.setFontSize(5.5);
+        p.setTextColor(...COLOR_INK);
+        p.text(`DISCOTECA · #${indexNum}`, x + 5, y + 78);
+        p.text("FRONT ROW", x + cardW / 2 + 2, y + 78);
+
+        // Barcode no fundo
+        drawBarcode(p, x + 5, y + cardH - 4, cardW - 10, 2.5, indexNum * 137);
+      }
+
+      // Desenha a carta-verso (com info da música — ano grande)
+      function drawBackCard(p, x, y, t, indexNum) {
+        // Fundo bege
+        fillRect(p, x, y, cardW, cardH, COLOR_BG);
+
+        // Faixa escura lateral esquerda (o "stub")
+        const stubW = 14;
+        fillRect(p, x, y, stubW, cardH, COLOR_DARK);
+
+        // Texto vertical no stub: "STUB" + "DISCO TECA"
+        p.setFont("helvetica", "bold");
+        p.setFontSize(5);
+        p.setTextColor(...COLOR_BG);
+        p.text("STUB", x + 4, y + 8);
+
+        p.setFontSize(10);
+        p.text("DISCO", x + 3, y + 16);
+        p.text("TECA", x + 3, y + 22);
+
+        // Numero da carta (vertical, à direita do stub) — rotação não é trivial,
+        // faço-o horizontal num espaço pequeno
+        p.setFontSize(3.5);
+        p.setFont("helvetica", "normal");
+        p.text(`No. ${String(indexNum).padStart(3, "0")}`, x + 4, y + cardH - 8);
+        p.text("ADMIT ONE", x + 4, y + cardH - 5);
+
+        // Ano no topo do espaço bege
+        p.setFont("helvetica", "normal");
+        p.setFontSize(5);
+        p.setTextColor(...COLOR_BLUE);
+        p.text("ANO", x + stubW + 4, y + 10);
+
+        // Ano gigante
+        p.setFont("helvetica", "bold");
+        p.setFontSize(34);
+        p.setTextColor(...COLOR_DARK);
+        const yearText = String(t.year);
+        p.text(yearText, x + stubW + (cardW - stubW) / 2 + 4, y + 28, { align: "center" });
+
+        // Linha separadora horizontal no topo
+        p.setDrawColor(...COLOR_DARK);
+        p.setLineWidth(0.2);
+        p.line(x + stubW + 3, y + 4.5, x + cardW - 3, y + 4.5);
+
+        // FAIXA texto pequeno no canto superior direito
+        p.setFont("helvetica", "normal");
+        p.setFontSize(4.5);
+        p.setTextColor(...COLOR_RED);
+        p.text("♪ FAIXA", x + cardW - 4, y + 3, { align: "right" });
+
+        // "SCOTECA" (continuação do logo do verso)
+        p.setFontSize(5);
+        p.setTextColor(...COLOR_INK);
+        p.text("SCOTECA", x + stubW + 4, y + 3);
+
+        // Caixa tracejada com título e artista
+        const boxX = x + stubW + 5;
+        const boxY = y + 42;
+        const boxW = cardW - stubW - 9;
+        const boxH = 28;
+
+        // Tracejado (jsPDF não tem dashed nativo simples, simulo com setLineDashPattern)
+        p.setDrawColor(...COLOR_INK);
+        p.setLineWidth(0.2);
+        try {
+          p.setLineDashPattern([0.8, 0.6], 0);
+        } catch (e) { /* fallback: linha sólida */ }
+        p.rect(boxX, boxY, boxW, boxH);
+        try { p.setLineDashPattern([], 0); } catch (e) {}
+
+        // Sombra/destaque do título (retângulo cinza claro atrás)
+        p.setFillColor(180, 170, 145);
+        p.rect(boxX - 1.5, boxY + 2.5, 18, boxH - 5, "F");
+
+        // Labels TÍTULO / ARTISTA
+        p.setFont("helvetica", "normal");
+        p.setFontSize(4.5);
+        p.setTextColor(...COLOR_BLUE);
+        p.text("TÍTULO", boxX + 2, boxY + 5);
+
+        p.setFont("helvetica", "bold");
+        p.setFontSize(7.5);
+        p.setTextColor(...COLOR_DARK);
+        const nameLines = p.splitTextToSize(t.name.toUpperCase(), boxW - 4);
+        p.text(nameLines.slice(0, 2), boxX + 2, boxY + 10);
+
+        p.setFont("helvetica", "normal");
+        p.setFontSize(4.5);
+        p.setTextColor(...COLOR_RED);
+        p.text("ARTISTA", boxX + 2, boxY + 18);
+
+        p.setFont("helvetica", "normal");
+        p.setFontSize(6.5);
+        p.setTextColor(...COLOR_INK);
+        const artistLines = p.splitTextToSize(t.artists, boxW - 4);
+        p.text(artistLines.slice(0, 2), boxX + 2, boxY + 23);
+
+        // Ano repetido em pequeno no canto inferior do stub
+        p.setFont("helvetica", "bold");
+        p.setFontSize(8);
+        p.setTextColor(...COLOR_BG);
+        p.text(yearText, x + 3, y + cardH - 3);
+
+        // Barcode no fundo do bege
+        drawBarcode(p, x + stubW + 4, y + cardH - 4, cardW - stubW - 7, 2.5, indexNum * 211);
       }
 
       const totalPages = Math.ceil(tracks.length / cardsPerPage);
 
       for (let pageNum = 0; pageNum < totalPages; pageNum++) {
-        // ===== PÁGINA FRENTE (QR codes) =====
+        // ===== PÁGINA FRENTE (admission tickets com QR) =====
         if (pageNum > 0) pdf.addPage();
+
+        // Fundo branco da página
+        pdf.setFillColor(255, 255, 255);
+        pdf.rect(0, 0, pageW, pageH, "F");
 
         for (let slot = 0; slot < cardsPerPage; slot++) {
           const trackIdx = pageNum * cardsPerPage + slot;
@@ -489,26 +686,14 @@ function GenerateView({ token, onBack, onLogin }) {
           const row = Math.floor(slot / cols);
           const x = marginX + col * cardW;
           const y = marginY + row * cardH;
-
           drawCutMarks(pdf, x, y, cardW, cardH);
-
-          // QR code centrado
-          const qrUrl = `https://open.spotify.com/track/${t.id}`;
-          const qrDataURL = await QRCode.toDataURL(qrUrl, { width: 500, margin: 1 });
-          const qrSize = 45;
-          pdf.addImage(qrDataURL, "PNG", x + (cardW - qrSize) / 2, y + (cardH - qrSize) / 2 - 5, qrSize, qrSize);
-
-          // Logo pequeno no fundo
-          pdf.setFontSize(8);
-          pdf.setTextColor(150);
-          pdf.text("DISCOTECA", x + cardW / 2, y + cardH - 6, { align: "center" });
-          pdf.setFontSize(6);
-          pdf.setTextColor(180);
-          pdf.text(`#${trackIdx + 1}`, x + cardW / 2, y + cardH - 2, { align: "center" });
+          await drawFrontCard(pdf, x, y, t, trackIdx + 1);
         }
 
-        // ===== PÁGINA VERSO (textos, espelhada horizontalmente) =====
+        // ===== PÁGINA VERSO (info da música, espelhada) =====
         pdf.addPage();
+        pdf.setFillColor(255, 255, 255);
+        pdf.rect(0, 0, pageW, pageH, "F");
 
         for (let slot = 0; slot < cardsPerPage; slot++) {
           const trackIdx = pageNum * cardsPerPage + slot;
@@ -516,40 +701,12 @@ function GenerateView({ token, onBack, onLogin }) {
           const t = tracks[trackIdx];
           const col = slot % cols;
           const row = Math.floor(slot / cols);
-
-          // ESPELHAR horizontalmente: a coluna 0 da frente fica na coluna (cols-1) do verso
+          // ESPELHAR horizontalmente
           const mirroredCol = (cols - 1) - col;
           const x = marginX + mirroredCol * cardW;
           const y = marginY + row * cardH;
-
           drawCutMarks(pdf, x, y, cardW, cardH);
-
-          // Ano grande, centrado
-          pdf.setFontSize(36);
-          pdf.setTextColor(220, 30, 100);
-          pdf.text(String(t.year), x + cardW / 2, y + 32, { align: "center" });
-
-          // Linha decorativa
-          pdf.setDrawColor(220, 30, 100);
-          pdf.setLineWidth(0.3);
-          pdf.line(x + 15, y + 38, x + cardW - 15, y + 38);
-
-          // Nome da música
-          pdf.setFontSize(10);
-          pdf.setTextColor(20);
-          const nameLines = pdf.splitTextToSize(t.name, cardW - 8);
-          pdf.text(nameLines.slice(0, 3), x + cardW / 2, y + 48, { align: "center" });
-
-          // Artista
-          pdf.setFontSize(8);
-          pdf.setTextColor(100);
-          const artistLines = pdf.splitTextToSize(t.artists, cardW - 8);
-          pdf.text(artistLines.slice(0, 2), x + cardW / 2, y + 62, { align: "center" });
-
-          // Logo pequeno no fundo
-          pdf.setFontSize(7);
-          pdf.setTextColor(150);
-          pdf.text("DISCOTECA", x + cardW / 2, y + cardH - 4, { align: "center" });
+          drawBackCard(pdf, x, y, t, trackIdx + 1);
         }
       }
 
