@@ -444,279 +444,511 @@ function GenerateView({ token, onBack, onLogin }) {
     setGeneratingPDF(true);
     try {
       const QRCode = (await import("https://esm.sh/qrcode@1.5.3")).default;
-      const { jsPDF } = await import("https://esm.sh/jspdf@2.5.1");
 
-      const pdf = new jsPDF({ unit: "mm", format: "a4" });
-      const pageW = 210, pageH = 297;
-      const cols = 3, rows = 3;
-      const cardsPerPage = cols * rows;
-      const cardW = 60, cardH = 85;
-      const marginX = (pageW - cols * cardW) / 2;
-      const marginY = (pageH - rows * cardH) / 2;
+      // Gerar QR codes para todas as tracks
+      const qrCodes = await Promise.all(
+        tracks.map(t =>
+          QRCode.toDataURL(`https://open.spotify.com/track/${t.id}`, {
+            width: 600,
+            margin: 1,
+            color: { dark: "#191614", light: "#F0E6CD" },
+          })
+        )
+      );
 
-      // Paleta inspirada no design
-      const COLOR_BG = [240, 230, 205];        // bege ticket
-      const COLOR_DARK = [25, 22, 20];         // preto/castanho escuro
-      const COLOR_RED = [180, 70, 50];         // laranja-tijolo
-      const COLOR_BLUE = [80, 110, 150];       // azul descolorado
-      const COLOR_INK = [40, 35, 30];          // tinta dos textos
-
-      function fillRect(p, x, y, w, h, color) {
-        p.setFillColor(...color);
-        p.rect(x, y, w, h, "F");
-      }
-
-      // Marcas de corte discretas nos cantos das cartas
-      function drawCutMarks(p, x, y, w, h) {
-        p.setDrawColor(120, 100, 80);
-        p.setLineWidth(0.1);
-        const len = 2.5;
-        const off = 0.5;
-        // 4 cantos: pequenas linhas externas para guiar o corte
-        p.line(x - len, y - off, x - off, y - off);
-        p.line(x - off, y - len, x - off, y - off);
-        p.line(x + w + off, y - off, x + w + len, y - off);
-        p.line(x + w + off, y - len, x + w + off, y - off);
-        p.line(x - len, y + h + off, x - off, y + h + off);
-        p.line(x - off, y + h + off, x - off, y + h + len);
-        p.line(x + w + off, y + h + off, x + w + len, y + h + off);
-        p.line(x + w + off, y + h + off, x + w + off, y + h + len);
-      }
-
-      // "Código de barras" decorativo (linhas pretas verticais aleatórias mas determinísticas)
-      function drawBarcode(p, x, y, w, h, seed) {
-        p.setFillColor(...COLOR_DARK);
-        let cursor = x;
-        let rng = seed;
-        const next = () => { rng = (rng * 9301 + 49297) % 233280; return rng / 233280; };
-        while (cursor < x + w) {
-          const barW = 0.25 + next() * 0.6;
-          const gap = 0.2 + next() * 0.5;
-          if (cursor + barW > x + w) break;
-          p.rect(cursor, y, barW, h, "F");
-          cursor += barW + gap;
-        }
-      }
-
-      // Desenha a carta-frente (estilo "bilhete" com QR ao centro)
-      async function drawFrontCard(p, x, y, t, indexNum) {
-        // Fundo bege com bordas arredondadas (simuladas com rect normal + cantos brancos)
-        fillRect(p, x, y, cardW, cardH, COLOR_BG);
-
-        // Borda interna fina escura
-        p.setDrawColor(...COLOR_DARK);
-        p.setLineWidth(0.3);
-        p.rect(x + 2, y + 2, cardW - 4, cardH - 4);
-
-        // Topo: "— ADMISSION TICKET —"
-        p.setFont("helvetica", "normal");
-        p.setFontSize(6);
-        p.setTextColor(...COLOR_INK);
-        p.text("— ADMISSION TICKET —", x + cardW / 2, y + 7, { align: "center" });
-
-        // Título grande "DISCOTECA" em duas linhas
-        p.setFont("helvetica", "bold");
-        p.setFontSize(18);
-        p.setTextColor(...COLOR_DARK);
-        p.text("DISCO", x + cardW / 2, y + 17, { align: "center" });
-        p.text("TECA", x + cardW / 2, y + 24, { align: "center" });
-
-        // QR code centrado
-        const qrUrl = `https://open.spotify.com/track/${t.id}`;
-        const qrDataURL = await QRCode.toDataURL(qrUrl, {
-          width: 500,
-          margin: 1,
-          color: { dark: "#191614", light: "#F0E6CD" },
-        });
-        const qrSize = 28;
-        p.addImage(qrDataURL, "PNG", x + (cardW - qrSize) / 2, y + 30, qrSize, qrSize);
-
-        // Carimbo "ADMIT • ONE" inclinado por baixo do QR
-        const stampX = x + cardW / 2;
-        const stampY = y + 65;
-        p.saveGraphicsState && p.saveGraphicsState();
-        // Caixa do carimbo (não dá para rodar facilmente em jspdf sem transforms; faz reto)
-        p.setDrawColor(...COLOR_RED);
-        p.setLineWidth(0.5);
-        p.rect(stampX - 14, stampY - 3.5, 28, 7);
-        p.setFont("helvetica", "bold");
-        p.setFontSize(8);
-        p.setTextColor(...COLOR_RED);
-        p.text("ADMIT • ONE", stampX, stampY + 1, { align: "center" });
-        p.restoreGraphicsState && p.restoreGraphicsState();
-
-        // Info no fundo (event / section)
-        p.setFont("helvetica", "normal");
-        p.setFontSize(4.5);
-        p.setTextColor(120, 100, 80);
-        p.text("EVENT", x + 5, y + 75);
-        p.text("SECTION", x + cardW / 2 + 2, y + 75);
-        p.setFont("helvetica", "bold");
-        p.setFontSize(5.5);
-        p.setTextColor(...COLOR_INK);
-        p.text(`DISCOTECA · #${indexNum}`, x + 5, y + 78);
-        p.text("FRONT ROW", x + cardW / 2 + 2, y + 78);
-
-        // Barcode no fundo
-        drawBarcode(p, x + 5, y + cardH - 4, cardW - 10, 2.5, indexNum * 137);
-      }
-
-      // Desenha a carta-verso (com info da música — ano grande)
-      function drawBackCard(p, x, y, t, indexNum) {
-        // Fundo bege
-        fillRect(p, x, y, cardW, cardH, COLOR_BG);
-
-        // Faixa escura lateral esquerda (o "stub")
-        const stubW = 14;
-        fillRect(p, x, y, stubW, cardH, COLOR_DARK);
-
-        // Texto vertical no stub: "STUB" + "DISCO TECA"
-        p.setFont("helvetica", "bold");
-        p.setFontSize(5);
-        p.setTextColor(...COLOR_BG);
-        p.text("STUB", x + 4, y + 8);
-
-        p.setFontSize(10);
-        p.text("DISCO", x + 3, y + 16);
-        p.text("TECA", x + 3, y + 22);
-
-        // Numero da carta (vertical, à direita do stub) — rotação não é trivial,
-        // faço-o horizontal num espaço pequeno
-        p.setFontSize(3.5);
-        p.setFont("helvetica", "normal");
-        p.text(`No. ${String(indexNum).padStart(3, "0")}`, x + 4, y + cardH - 8);
-        p.text("ADMIT ONE", x + 4, y + cardH - 5);
-
-        // Ano no topo do espaço bege
-        p.setFont("helvetica", "normal");
-        p.setFontSize(5);
-        p.setTextColor(...COLOR_BLUE);
-        p.text("ANO", x + stubW + 4, y + 10);
-
-        // Ano gigante
-        p.setFont("helvetica", "bold");
-        p.setFontSize(34);
-        p.setTextColor(...COLOR_DARK);
-        const yearText = String(t.year);
-        p.text(yearText, x + stubW + (cardW - stubW) / 2 + 4, y + 28, { align: "center" });
-
-        // Linha separadora horizontal no topo
-        p.setDrawColor(...COLOR_DARK);
-        p.setLineWidth(0.2);
-        p.line(x + stubW + 3, y + 4.5, x + cardW - 3, y + 4.5);
-
-        // FAIXA texto pequeno no canto superior direito
-        p.setFont("helvetica", "normal");
-        p.setFontSize(4.5);
-        p.setTextColor(...COLOR_RED);
-        p.text("♪ FAIXA", x + cardW - 4, y + 3, { align: "right" });
-
-        // "SCOTECA" (continuação do logo do verso)
-        p.setFontSize(5);
-        p.setTextColor(...COLOR_INK);
-        p.text("SCOTECA", x + stubW + 4, y + 3);
-
-        // Caixa tracejada com título e artista
-        const boxX = x + stubW + 5;
-        const boxY = y + 42;
-        const boxW = cardW - stubW - 9;
-        const boxH = 28;
-
-        // Tracejado (jsPDF não tem dashed nativo simples, simulo com setLineDashPattern)
-        p.setDrawColor(...COLOR_INK);
-        p.setLineWidth(0.2);
-        try {
-          p.setLineDashPattern([0.8, 0.6], 0);
-        } catch (e) { /* fallback: linha sólida */ }
-        p.rect(boxX, boxY, boxW, boxH);
-        try { p.setLineDashPattern([], 0); } catch (e) {}
-
-        // Sombra/destaque do título (retângulo cinza claro atrás)
-        p.setFillColor(180, 170, 145);
-        p.rect(boxX - 1.5, boxY + 2.5, 18, boxH - 5, "F");
-
-        // Labels TÍTULO / ARTISTA
-        p.setFont("helvetica", "normal");
-        p.setFontSize(4.5);
-        p.setTextColor(...COLOR_BLUE);
-        p.text("TÍTULO", boxX + 2, boxY + 5);
-
-        p.setFont("helvetica", "bold");
-        p.setFontSize(7.5);
-        p.setTextColor(...COLOR_DARK);
-        const nameLines = p.splitTextToSize(t.name.toUpperCase(), boxW - 4);
-        p.text(nameLines.slice(0, 2), boxX + 2, boxY + 10);
-
-        p.setFont("helvetica", "normal");
-        p.setFontSize(4.5);
-        p.setTextColor(...COLOR_RED);
-        p.text("ARTISTA", boxX + 2, boxY + 18);
-
-        p.setFont("helvetica", "normal");
-        p.setFontSize(6.5);
-        p.setTextColor(...COLOR_INK);
-        const artistLines = p.splitTextToSize(t.artists, boxW - 4);
-        p.text(artistLines.slice(0, 2), boxX + 2, boxY + 23);
-
-        // Ano repetido em pequeno no canto inferior do stub
-        p.setFont("helvetica", "bold");
-        p.setFontSize(8);
-        p.setTextColor(...COLOR_BG);
-        p.text(yearText, x + 3, y + cardH - 3);
-
-        // Barcode no fundo do bege
-        drawBarcode(p, x + stubW + 4, y + cardH - 4, cardW - stubW - 7, 2.5, indexNum * 211);
-      }
-
+      // Construir o HTML
+      const cardsPerPage = 9; // 3x3
+      const cols = 3;
       const totalPages = Math.ceil(tracks.length / cardsPerPage);
 
+      let pagesHTML = "";
       for (let pageNum = 0; pageNum < totalPages; pageNum++) {
-        // ===== PÁGINA FRENTE (admission tickets com QR) =====
-        if (pageNum > 0) pdf.addPage();
-
-        // Fundo branco da página
-        pdf.setFillColor(255, 255, 255);
-        pdf.rect(0, 0, pageW, pageH, "F");
-
+        // === Página FRENTE ===
+        let frontCards = "";
         for (let slot = 0; slot < cardsPerPage; slot++) {
-          const trackIdx = pageNum * cardsPerPage + slot;
-          if (trackIdx >= tracks.length) break;
-          const t = tracks[trackIdx];
-          const col = slot % cols;
-          const row = Math.floor(slot / cols);
-          const x = marginX + col * cardW;
-          const y = marginY + row * cardH;
-          drawCutMarks(pdf, x, y, cardW, cardH);
-          await drawFrontCard(pdf, x, y, t, trackIdx + 1);
+          const idx = pageNum * cardsPerPage + slot;
+          if (idx >= tracks.length) {
+            frontCards += `<div class="card empty"></div>`;
+            continue;
+          }
+          const t = tracks[idx];
+          const qr = qrCodes[idx];
+          frontCards += `
+            <div class="card front">
+              <div class="ticket-border">
+                <div class="ticket-top">— ADMISSION TICKET —</div>
+                <div class="logo-big">
+                  <div>DISCO</div>
+                  <div>TECA</div>
+                </div>
+                <div class="qr-wrap">
+                  <img src="${qr}" alt="QR" />
+                </div>
+                <div class="stamp">
+                  <div class="stamp-inner">ADMIT · ONE</div>
+                </div>
+                <div class="ticket-info">
+                  <div class="info-col">
+                    <div class="info-label">EVENT</div>
+                    <div class="info-value">DISCOTECA · VOL. 1</div>
+                    <div class="info-label">VENUE</div>
+                    <div class="info-value">N.º ${String(idx + 1).padStart(3, "0")}</div>
+                  </div>
+                  <div class="info-col">
+                    <div class="info-label">SECTION</div>
+                    <div class="info-value">FRONT ROW</div>
+                    <div class="info-label">SEAT</div>
+                    <div class="info-value">—</div>
+                  </div>
+                </div>
+                <div class="barcode">${barcodeBars(idx * 137)}</div>
+              </div>
+            </div>`;
         }
+        pagesHTML += `<div class="page front-page"><div class="grid">${frontCards}</div></div>`;
 
-        // ===== PÁGINA VERSO (info da música, espelhada) =====
-        pdf.addPage();
-        pdf.setFillColor(255, 255, 255);
-        pdf.rect(0, 0, pageW, pageH, "F");
-
-        for (let slot = 0; slot < cardsPerPage; slot++) {
-          const trackIdx = pageNum * cardsPerPage + slot;
-          if (trackIdx >= tracks.length) break;
-          const t = tracks[trackIdx];
-          const col = slot % cols;
-          const row = Math.floor(slot / cols);
-          // ESPELHAR horizontalmente
-          const mirroredCol = (cols - 1) - col;
-          const x = marginX + mirroredCol * cardW;
-          const y = marginY + row * cardH;
-          drawCutMarks(pdf, x, y, cardW, cardH);
-          drawBackCard(pdf, x, y, t, trackIdx + 1);
+        // === Página VERSO (espelhada) ===
+        let backCards = "";
+        // Para espelhar horizontalmente, percorremos colunas ao contrário em cada linha
+        const slotsThisPage = Math.min(cardsPerPage, tracks.length - pageNum * cardsPerPage);
+        const arrangement = [];
+        for (let row = 0; row < 3; row++) {
+          for (let col = cols - 1; col >= 0; col--) {
+            const origSlot = row * cols + col;
+            if (origSlot < slotsThisPage) {
+              arrangement.push(pageNum * cardsPerPage + origSlot);
+            } else {
+              arrangement.push(-1);
+            }
+          }
         }
+        for (const idx of arrangement) {
+          if (idx < 0) {
+            backCards += `<div class="card empty"></div>`;
+            continue;
+          }
+          const t = tracks[idx];
+          backCards += `
+            <div class="card back">
+              <div class="back-content">
+                <div class="stub">
+                  <div class="stub-label">STUB</div>
+                  <div class="stub-logo">
+                    <div>DISCO</div>
+                    <div>TECA</div>
+                  </div>
+                  <div class="stub-vertical">
+                    NO. ${String(idx + 1).padStart(3, "0")} · ADMIT ONE
+                  </div>
+                  <div class="stub-year">${escapeHTML(String(t.year))}</div>
+                </div>
+                <div class="ticket-main">
+                  <div class="back-top">
+                    <span class="back-top-left">SCOTECA</span>
+                    <span class="back-top-right">♪ FAIXA</span>
+                  </div>
+                  <div class="year-section">
+                    <div class="year-label">ANO</div>
+                    <div class="year-big">${escapeHTML(String(t.year))}</div>
+                  </div>
+                  <div class="info-box">
+                    <div class="info-box-shadow"></div>
+                    <div class="info-box-content">
+                      <div class="title-label">TÍTULO</div>
+                      <div class="title-value">${escapeHTML(t.name.toUpperCase())}</div>
+                      <div class="artist-label">ARTISTA</div>
+                      <div class="artist-value">${escapeHTML(t.artists)}</div>
+                    </div>
+                  </div>
+                  <div class="barcode">${barcodeBars(idx * 211)}</div>
+                </div>
+              </div>
+            </div>`;
+        }
+        pagesHTML += `<div class="page back-page"><div class="grid">${backCards}</div></div>`;
       }
 
-      pdf.save("discoteca-cartas.pdf");
+      const html = buildHTML(pagesHTML);
+
+      // Abrir nova janela
+      const win = window.open("", "_blank");
+      if (!win) {
+        setError("O browser bloqueou a janela popup. Permite popups para este site e tenta de novo.");
+        return;
+      }
+      win.document.write(html);
+      win.document.close();
     } catch (e) {
-      setError("Erro ao gerar PDF: " + e.message);
+      setError("Erro ao gerar cartas: " + e.message);
     } finally {
       setGeneratingPDF(false);
     }
   };
+
+  // Helpers
+  function escapeHTML(s) {
+    return String(s)
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;");
+  }
+
+  function barcodeBars(seed) {
+    // Gera spans HTML para um código de barras pseudo-aleatório determinístico
+    let rng = seed;
+    const next = () => { rng = (rng * 9301 + 49297) % 233280; return rng / 233280; };
+    let bars = "";
+    for (let i = 0; i < 60; i++) {
+      const w = (0.5 + next() * 1.5).toFixed(2);
+      const gap = (0.3 + next() * 0.8).toFixed(2);
+      bars += `<span style="width:${w}px;margin-right:${gap}px;"></span>`;
+    }
+    return bars;
+  }
+
+  function buildHTML(pagesHTML) {
+    return `<!DOCTYPE html>
+<html lang="pt">
+<head>
+<meta charset="UTF-8" />
+<title>Discoteca · Cartas</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Anton&family=Bebas+Neue&family=Oswald:wght@400;500;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet" />
+<style>
+  :root {
+    --bg: #F0E6CD;
+    --dark: #191614;
+    --red: #B44632;
+    --blue: #506E96;
+    --ink: #28231E;
+    --shadow: #B4AA91;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background: #ddd;
+    font-family: 'Oswald', sans-serif;
+    color: var(--ink);
+  }
+
+  /* Banner de impressão (não aparece na impressão) */
+  .print-banner {
+    position: sticky; top: 0; z-index: 100;
+    background: #191614; color: #F0E6CD;
+    padding: 16px 24px;
+    display: flex; align-items: center; justify-content: space-between;
+    box-shadow: 0 2px 10px rgba(0,0,0,0.3);
+    font-family: 'Oswald', sans-serif;
+  }
+  .print-banner h1 { font-size: 18px; letter-spacing: 0.1em; }
+  .print-banner button {
+    background: var(--red); color: #F0E6CD; border: none;
+    padding: 10px 20px; font-family: 'Oswald'; font-weight: 700;
+    font-size: 14px; cursor: pointer; letter-spacing: 0.1em;
+    text-transform: uppercase;
+  }
+  .print-banner button:hover { background: #d05a40; }
+  .print-instructions {
+    background: #fffae6; border-left: 4px solid var(--red);
+    padding: 12px 16px; margin: 16px auto; max-width: 210mm;
+    font-size: 13px; color: #333;
+  }
+  .print-instructions strong { color: var(--red); }
+
+  @media print {
+    body { background: white; }
+    .print-banner, .print-instructions { display: none !important; }
+  }
+
+  /* Página A4 */
+  .page {
+    width: 210mm;
+    height: 297mm;
+    margin: 10mm auto;
+    background: white;
+    page-break-after: always;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    box-shadow: 0 4px 20px rgba(0,0,0,0.1);
+  }
+  @media print {
+    .page { margin: 0; box-shadow: none; }
+  }
+  .grid {
+    display: grid;
+    grid-template-columns: repeat(3, 60mm);
+    grid-template-rows: repeat(3, 85mm);
+    gap: 0;
+  }
+
+  /* Cartas */
+  .card {
+    width: 60mm; height: 85mm;
+    position: relative;
+    overflow: hidden;
+    /* Marcas de corte */
+    box-shadow:
+      inset 2.5mm 0 0 -2.4mm rgba(0,0,0,0.3),
+      inset -2.5mm 0 0 -2.4mm rgba(0,0,0,0.3),
+      inset 0 2.5mm 0 -2.4mm rgba(0,0,0,0.3),
+      inset 0 -2.5mm 0 -2.4mm rgba(0,0,0,0.3);
+  }
+  .card.empty { background: transparent; box-shadow: none; }
+
+  /* === FRENTE === */
+  .card.front .ticket-border {
+    width: 100%; height: 100%;
+    background-color: var(--bg);
+    background-image:
+      radial-gradient(circle at 1px 1px, rgba(0,0,0,0.08) 1px, transparent 0);
+    background-size: 3px 3px;
+    padding: 4mm 4mm 3mm 4mm;
+    display: flex; flex-direction: column;
+    align-items: center;
+    position: relative;
+  }
+  .card.front .ticket-border::before {
+    content: "";
+    position: absolute;
+    inset: 2mm;
+    border: 0.4mm solid var(--dark);
+    pointer-events: none;
+  }
+  .ticket-top {
+    font-family: 'Oswald';
+    font-size: 7pt;
+    letter-spacing: 0.2em;
+    color: var(--ink);
+    margin-top: 2mm;
+    z-index: 1;
+  }
+  .logo-big {
+    font-family: 'Anton', 'Bebas Neue', sans-serif;
+    font-size: 22pt;
+    line-height: 0.85;
+    color: var(--dark);
+    text-align: center;
+    margin-top: 2mm;
+    letter-spacing: 0.02em;
+    z-index: 1;
+  }
+  .qr-wrap {
+    margin-top: 3mm;
+    background: var(--bg);
+    padding: 1mm;
+    z-index: 1;
+  }
+  .qr-wrap img {
+    display: block;
+    width: 28mm; height: 28mm;
+  }
+  .stamp {
+    margin-top: 2mm;
+    transform: rotate(-8deg);
+    z-index: 1;
+  }
+  .stamp-inner {
+    border: 0.5mm solid var(--red);
+    color: var(--red);
+    padding: 1mm 4mm;
+    font-family: 'Oswald';
+    font-weight: 700;
+    font-size: 8pt;
+    letter-spacing: 0.18em;
+  }
+  .ticket-info {
+    margin-top: auto;
+    width: 100%;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 1mm 3mm;
+    padding: 0 2mm;
+    z-index: 1;
+  }
+  .info-label {
+    font-family: 'Oswald';
+    font-size: 4.5pt;
+    letter-spacing: 0.15em;
+    color: #998866;
+  }
+  .info-value {
+    font-family: 'Oswald';
+    font-weight: 700;
+    font-size: 6pt;
+    color: var(--dark);
+    letter-spacing: 0.05em;
+    margin-bottom: 0.5mm;
+  }
+  .barcode {
+    margin-top: 1.5mm;
+    width: 100%;
+    height: 4mm;
+    display: flex;
+    align-items: stretch;
+    padding: 0 2mm;
+    z-index: 1;
+  }
+  .barcode span {
+    background: var(--dark);
+    height: 100%;
+    flex-shrink: 0;
+  }
+
+  /* === VERSO === */
+  .card.back {
+    background-color: white;
+  }
+  .back-content {
+    width: 100%; height: 100%;
+    display: flex;
+    background-color: var(--bg);
+    background-image:
+      radial-gradient(circle at 1px 1px, rgba(0,0,0,0.08) 1px, transparent 0);
+    background-size: 3px 3px;
+  }
+  .stub {
+    width: 16mm;
+    background: var(--dark);
+    color: var(--bg);
+    display: flex;
+    flex-direction: column;
+    padding: 3mm 2mm;
+    position: relative;
+  }
+  .stub-label {
+    font-family: 'Oswald';
+    font-size: 6pt;
+    letter-spacing: 0.3em;
+    margin-bottom: 2mm;
+  }
+  .stub-logo {
+    font-family: 'Anton', 'Bebas Neue', sans-serif;
+    font-size: 16pt;
+    line-height: 0.85;
+    letter-spacing: 0.02em;
+  }
+  .stub-vertical {
+    writing-mode: vertical-rl;
+    transform: rotate(180deg);
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 5pt;
+    letter-spacing: 0.2em;
+    margin: 5mm 0 auto;
+    align-self: center;
+  }
+  .stub-year {
+    font-family: 'Anton', 'Bebas Neue', sans-serif;
+    font-size: 11pt;
+    color: var(--bg);
+    margin-top: auto;
+  }
+  .ticket-main {
+    flex: 1;
+    padding: 3mm 4mm;
+    display: flex;
+    flex-direction: column;
+    position: relative;
+  }
+  .back-top {
+    display: flex; justify-content: space-between;
+    border-bottom: 0.3mm solid var(--dark);
+    padding-bottom: 1.5mm;
+  }
+  .back-top-left {
+    font-family: 'Oswald';
+    font-size: 5pt;
+    letter-spacing: 0.2em;
+    color: var(--ink);
+  }
+  .back-top-right {
+    font-family: 'Oswald';
+    font-size: 5pt;
+    letter-spacing: 0.2em;
+    color: var(--red);
+  }
+  .year-section {
+    margin-top: 2mm;
+  }
+  .year-label {
+    font-family: 'Oswald';
+    font-size: 6pt;
+    letter-spacing: 0.2em;
+    color: var(--blue);
+  }
+  .year-big {
+    font-family: 'Anton', 'Bebas Neue', sans-serif;
+    font-size: 36pt;
+    line-height: 1;
+    color: var(--dark);
+    letter-spacing: -0.02em;
+    margin-top: 1mm;
+  }
+  .info-box {
+    margin-top: 4mm;
+    position: relative;
+  }
+  .info-box-shadow {
+    position: absolute;
+    top: 2mm; left: -1.5mm;
+    width: 16mm; height: 100%;
+    background: var(--shadow);
+    z-index: 0;
+  }
+  .info-box-content {
+    position: relative;
+    z-index: 1;
+    border: 0.3mm dashed var(--ink);
+    padding: 2mm;
+    background: transparent;
+  }
+  .title-label {
+    font-family: 'Oswald';
+    font-size: 5pt;
+    letter-spacing: 0.15em;
+    color: var(--blue);
+  }
+  .title-value {
+    font-family: 'Anton', 'Bebas Neue', sans-serif;
+    font-size: 11pt;
+    color: var(--dark);
+    line-height: 1.1;
+    margin: 1mm 0 2mm;
+    word-wrap: break-word;
+  }
+  .artist-label {
+    font-family: 'Oswald';
+    font-size: 5pt;
+    letter-spacing: 0.15em;
+    color: var(--red);
+  }
+  .artist-value {
+    font-family: 'Oswald';
+    font-weight: 500;
+    font-size: 8pt;
+    color: var(--ink);
+    margin-top: 0.5mm;
+    line-height: 1.2;
+  }
+  .ticket-main .barcode {
+    margin-top: auto;
+    padding: 0;
+  }
+</style>
+</head>
+<body>
+  <div class="print-banner">
+    <h1>🎵 DISCOTECA · ${tracks.length} cartas</h1>
+    <button onclick="window.print()">Imprimir / Guardar PDF</button>
+  </div>
+  <div class="print-instructions">
+    <strong>Antes de imprimir:</strong> Nas opções → ativa <strong>"Frente e verso"</strong> (virar pelo lado comprido / long edge), <strong>escala 100%</strong>, <strong>margens por defeito</strong>. Faz um teste com 1 página primeiro.
+  </div>
+  ${pagesHTML}
+</body>
+</html>`;
+  }
 
   if (!token) return (
     <div className="text-center py-12">
@@ -811,7 +1043,7 @@ function GenerateView({ token, onBack, onLogin }) {
           <div className="flex items-center justify-between flex-wrap gap-3">
             <p className="text-white/70">{tracks.length} músicas encontradas</p>
             <button onClick={generatePDF} disabled={generatingPDF} className="inline-flex items-center gap-2 px-6 py-3 bg-yellow-400 hover:bg-yellow-300 disabled:bg-white/10 disabled:text-white/40 text-black font-bold rounded-lg transition">
-              <Download className="w-4 h-4" /> {generatingPDF ? "A gerar PDF..." : "Descarregar PDF"}
+              <Download className="w-4 h-4" /> {generatingPDF ? "A preparar..." : "Abrir cartas para imprimir"}
             </button>
           </div>
           <div className="rounded-xl bg-white/5 border border-white/10 max-h-96 overflow-y-auto">
