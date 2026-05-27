@@ -304,17 +304,73 @@ function ActionCard({ icon, title, desc, color, onClick, disabled }) {
 
 // ============ GENERATE VIEW ============
 function GenerateView({ token, onBack, onLogin }) {
+  const [mode, setMode] = useState("text"); // "text" | "playlist"
+  const [textInput, setTextInput] = useState("");
   const [playlistInput, setPlaylistInput] = useState("");
   const [tracks, setTracks] = useState([]);
+  const [unmatched, setUnmatched] = useState([]);
   const [loading, setLoading] = useState(false);
+  const [progress, setProgress] = useState({ done: 0, total: 0 });
   const [error, setError] = useState("");
   const [generatingPDF, setGeneratingPDF] = useState(false);
 
-  const loadPlaylist = async () => {
+  // Procurar uma música no Spotify (1 query → primeira track)
+  async function searchTrack(query, token) {
+    const url = `https://api.spotify.com/v1/search?q=${encodeURIComponent(query)}&type=track&limit=1&market=PT`;
+    const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
+    if (!res.ok) return null;
+    const data = await res.json();
+    const t = data.tracks?.items?.[0];
+    if (!t) return null;
+    return {
+      id: t.id,
+      name: t.name,
+      artists: t.artists.map(a => a.name).join(", "),
+      year: t.album?.release_date ? t.album.release_date.slice(0, 4) : "?",
+      query,
+    };
+  }
+
+  // Carregar de texto (uma música por linha)
+  const loadFromText = async () => {
     setError("");
+    setUnmatched([]);
+    const lines = textInput
+      .split("\n")
+      .map(l => l.trim())
+      .filter(l => l && !l.startsWith("#"));
+    if (lines.length === 0) {
+      setError("Não encontrei nenhuma música. Cola uma linha por música (ex: 'Despacito - Luis Fonsi').");
+      return;
+    }
+    setLoading(true);
+    setProgress({ done: 0, total: lines.length });
+    const found = [];
+    const missing = [];
+    for (let i = 0; i < lines.length; i++) {
+      try {
+        const t = await searchTrack(lines[i], token);
+        if (t) found.push(t);
+        else missing.push(lines[i]);
+      } catch (e) {
+        missing.push(lines[i]);
+      }
+      setProgress({ done: i + 1, total: lines.length });
+      // Pequeno delay para evitar rate limit
+      if (i % 10 === 9) await new Promise(r => setTimeout(r, 200));
+    }
+    setTracks(found);
+    setUnmatched(missing);
+    setLoading(false);
+  };
+
+  // Carregar de playlist (pode falhar com 403)
+  const loadFromPlaylist = async () => {
+    setError("");
+    setUnmatched([]);
     const id = extractPlaylistId(playlistInput);
     if (!id) {
-      setError("Não reconheço esse link. Cola um link do tipo https://open.spotify.com/playlist/...");
+      setError("Não reconheço esse link. Cola um link tipo https://open.spotify.com/playlist/...");
       return;
     }
     setLoading(true);
@@ -326,43 +382,33 @@ function GenerateView({ token, onBack, onLogin }) {
         setTracks(allTracks);
       }
     } catch (e) {
-      setError("Erro ao carregar playlist: " + e.message);
+      setError(e.message);
     } finally {
       setLoading(false);
     }
   };
 
-  // Tenta várias estratégias para contornar restrições da API
   async function fetchPlaylistTracks(id, token) {
     const headers = { Authorization: `Bearer ${token}` };
-
-    // Estratégia 1: endpoint /playlists/{id} (mais permissivo)
     try {
       const res = await fetch(`https://api.spotify.com/v1/playlists/${id}`, { headers });
       if (res.ok) {
         const data = await res.json();
         const items = data.tracks?.items || [];
-        let tracks = items
-          .filter(it => it.track && it.track.id)
-          .map(it => mapTrack(it.track));
-        // Se tem mais páginas, tentar buscar o resto
+        let tracks = items.filter(it => it.track && it.track.id).map(it => mapTrack(it.track));
         let nextUrl = data.tracks?.next;
         while (nextUrl) {
           try {
             const r2 = await fetch(nextUrl, { headers });
             if (!r2.ok) break;
             const d2 = await r2.json();
-            tracks.push(...(d2.items || [])
-              .filter(it => it.track && it.track.id)
-              .map(it => mapTrack(it.track)));
+            tracks.push(...(d2.items || []).filter(it => it.track && it.track.id).map(it => mapTrack(it.track)));
             nextUrl = d2.next;
           } catch { break; }
         }
         if (tracks.length > 0) return tracks;
       }
-    } catch (e) { /* tentar próxima estratégia */ }
-
-    // Estratégia 2: endpoint /playlists/{id}/tracks (o tradicional)
+    } catch (e) { /* fallback */ }
     try {
       let allTracks = [];
       let url = `https://api.spotify.com/v1/playlists/${id}/tracks?limit=100`;
@@ -370,23 +416,17 @@ function GenerateView({ token, onBack, onLogin }) {
         const res = await fetch(url, { headers });
         if (!res.ok) {
           if (allTracks.length > 0) return allTracks;
-          const body = await res.text();
-          throw new Error(`${res.status} — ${body.slice(0, 200)}`);
+          throw new Error(`Spotify ${res.status}`);
         }
         const data = await res.json();
-        allTracks.push(...(data.items || [])
-          .filter(it => it.track && it.track.id)
-          .map(it => mapTrack(it.track)));
+        allTracks.push(...(data.items || []).filter(it => it.track && it.track.id).map(it => mapTrack(it.track)));
         url = data.next;
       }
       return allTracks;
     } catch (e) {
       throw new Error(
-        `Não consegui aceder à playlist. O Spotify mudou regras em Nov 2024 e algumas playlists ficaram inacessíveis a apps em modo Development.\n\n` +
-        `Tenta:\n` +
-        `1) Criar uma playlist NOVA, pública, e copiar as músicas para lá\n` +
-        `2) Pedir Extension Request no Spotify Developer Dashboard\n\n` +
-        `Detalhe técnico: ${e.message}`
+        `Não consegui aceder à playlist (Spotify devolveu erro). Desde Nov 2024 o Spotify bloqueou várias playlists para apps em modo Development.\n\n` +
+        `💡 Solução: usa o modo "Lista de músicas" em cima — funciona sempre.`
       );
     }
   }
@@ -403,7 +443,6 @@ function GenerateView({ token, onBack, onLogin }) {
   const generatePDF = async () => {
     setGeneratingPDF(true);
     try {
-      // Carregar libs dinamicamente
       const QRCode = (await import("https://esm.sh/qrcode@1.5.3")).default;
       const { jsPDF } = await import("https://esm.sh/jspdf@2.5.1");
 
@@ -424,7 +463,6 @@ function GenerateView({ token, onBack, onLogin }) {
         const x = marginX + col * cardW;
         const y = marginY + row * cardH;
 
-        // Carta — frente: QR
         pdf.setDrawColor(180);
         pdf.roundedRect(x + 2, y + 2, cardW - 4, cardH - 4, 3, 3);
 
@@ -438,7 +476,6 @@ function GenerateView({ token, onBack, onLogin }) {
         pdf.setFontSize(7);
         pdf.text(`#${i + 1}`, x + cardW / 2, y + 64, { align: "center" });
 
-        // Texto pequeno com nome+ano (para virar a carta ou usar como confirmação)
         pdf.setFontSize(8);
         pdf.setTextColor(40);
         const nameLines = pdf.splitTextToSize(t.name, cardW - 10);
@@ -475,34 +512,90 @@ function GenerateView({ token, onBack, onLogin }) {
 
       <div>
         <h2 className="text-3xl font-bold" style={{ fontFamily: "'Bebas Neue', sans-serif", letterSpacing: "0.04em" }}>Gerar cartas</h2>
-        <p className="text-sm text-white/60 mt-1">Cola o link de uma playlist do Spotify (tua, pública ou seguida).</p>
+        <p className="text-sm text-white/60 mt-1">Escolhe como queres adicionar as músicas.</p>
       </div>
 
-      <div className="flex flex-col sm:flex-row gap-2">
-        <input
-          value={playlistInput}
-          onChange={e => setPlaylistInput(e.target.value)}
-          placeholder="https://open.spotify.com/playlist/..."
-          className="flex-1 px-4 py-3 rounded-lg bg-white/5 border border-white/10 focus:border-pink-400/60 focus:outline-none text-sm"
-        />
-        <button onClick={loadPlaylist} disabled={loading || !playlistInput} className="px-6 py-3 bg-pink-500 hover:bg-pink-400 disabled:bg-white/10 disabled:text-white/40 text-white font-bold rounded-lg transition">
-          {loading ? "A carregar..." : "Carregar"}
+      {/* Seletor de modo */}
+      <div className="flex gap-2 p-1 bg-white/5 rounded-lg border border-white/10 w-fit">
+        <button
+          onClick={() => setMode("text")}
+          className={`px-4 py-2 rounded-md text-sm font-bold transition ${mode === "text" ? "bg-pink-500 text-white" : "text-white/60 hover:text-white"}`}
+        >
+          📝 Lista de músicas
+        </button>
+        <button
+          onClick={() => setMode("playlist")}
+          className={`px-4 py-2 rounded-md text-sm font-bold transition ${mode === "playlist" ? "bg-pink-500 text-white" : "text-white/60 hover:text-white"}`}
+        >
+          🎵 Link de playlist
         </button>
       </div>
 
+      {mode === "text" && (
+        <div className="space-y-3">
+          <div className="text-sm text-white/70">
+            Cola uma música por linha. Formato livre — funciona melhor com <strong>"Música - Artista"</strong>.
+          </div>
+          <textarea
+            value={textInput}
+            onChange={e => setTextInput(e.target.value)}
+            placeholder={"Despacito - Luis Fonsi\nBlinding Lights - The Weeknd\nPimba Pimba - Emanuel\n..."}
+            rows={10}
+            className="w-full px-4 py-3 rounded-lg bg-white/5 border border-white/10 focus:border-pink-400/60 focus:outline-none text-sm font-mono"
+          />
+          <div className="flex items-center justify-between gap-2 flex-wrap">
+            <p className="text-xs text-white/40">
+              {textInput.split("\n").filter(l => l.trim() && !l.startsWith("#")).length} linhas
+            </p>
+            <button onClick={loadFromText} disabled={loading || !textInput.trim()} className="px-6 py-3 bg-pink-500 hover:bg-pink-400 disabled:bg-white/10 disabled:text-white/40 text-white font-bold rounded-lg transition">
+              {loading ? `A procurar... (${progress.done}/${progress.total})` : "Procurar no Spotify"}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {mode === "playlist" && (
+        <div className="space-y-3">
+          <div className="px-4 py-3 rounded-lg bg-yellow-400/10 border border-yellow-400/30 text-yellow-100 text-sm">
+            ⚠️ Desde Nov 2024 o Spotify restringiu o acesso a playlists para apps em modo Development. Se der erro, usa o modo "Lista de músicas".
+          </div>
+          <div className="flex flex-col sm:flex-row gap-2">
+            <input
+              value={playlistInput}
+              onChange={e => setPlaylistInput(e.target.value)}
+              placeholder="https://open.spotify.com/playlist/..."
+              className="flex-1 px-4 py-3 rounded-lg bg-white/5 border border-white/10 focus:border-pink-400/60 focus:outline-none text-sm"
+            />
+            <button onClick={loadFromPlaylist} disabled={loading || !playlistInput} className="px-6 py-3 bg-pink-500 hover:bg-pink-400 disabled:bg-white/10 disabled:text-white/40 text-white font-bold rounded-lg transition">
+              {loading ? "A carregar..." : "Carregar"}
+            </button>
+          </div>
+        </div>
+      )}
+
       {error && <div className="px-4 py-3 rounded-lg bg-red-500/10 border border-red-400/30 text-red-200 text-sm whitespace-pre-line">{error}</div>}
+
+      {unmatched.length > 0 && (
+        <div className="px-4 py-3 rounded-lg bg-orange-500/10 border border-orange-400/30 text-orange-100 text-sm">
+          <p className="font-bold mb-1">⚠️ {unmatched.length} músicas não foram encontradas no Spotify:</p>
+          <ul className="text-xs space-y-0.5 mt-2 max-h-32 overflow-y-auto">
+            {unmatched.map((u, i) => <li key={i}>• {u}</li>)}
+          </ul>
+          <p className="text-xs mt-2 text-orange-100/70">Reescreve-as mais simples (só título e artista principal) e tenta de novo, ou ignora.</p>
+        </div>
+      )}
 
       {tracks.length > 0 && (
         <div className="space-y-4">
           <div className="flex items-center justify-between flex-wrap gap-3">
-            <p className="text-white/70">{tracks.length} músicas carregadas</p>
+            <p className="text-white/70">{tracks.length} músicas encontradas</p>
             <button onClick={generatePDF} disabled={generatingPDF} className="inline-flex items-center gap-2 px-6 py-3 bg-yellow-400 hover:bg-yellow-300 disabled:bg-white/10 disabled:text-white/40 text-black font-bold rounded-lg transition">
               <Download className="w-4 h-4" /> {generatingPDF ? "A gerar PDF..." : "Descarregar PDF"}
             </button>
           </div>
           <div className="rounded-xl bg-white/5 border border-white/10 max-h-96 overflow-y-auto">
             {tracks.map((t, i) => (
-              <div key={t.id} className="flex items-center gap-3 px-4 py-2 border-b border-white/5 last:border-0 text-sm">
+              <div key={t.id + i} className="flex items-center gap-3 px-4 py-2 border-b border-white/5 last:border-0 text-sm">
                 <span className="text-white/30 w-8">{i + 1}</span>
                 <div className="flex-1 min-w-0">
                   <div className="truncate font-medium">{t.name}</div>
