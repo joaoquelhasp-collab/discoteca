@@ -323,7 +323,10 @@ function GenerateView({ token, onBack, onLogin }) {
       let url = `https://api.spotify.com/v1/playlists/${id}/tracks?limit=100&fields=items(track(id,name,artists(name),album(release_date))),next`;
       while (url) {
         const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
-        if (!res.ok) throw new Error(`Spotify API: ${res.status}`);
+       if (!res.ok) {
+  const errorBody = await res.text();
+  throw new Error(`Spotify API ${res.status}: ${errorBody}`);
+}
         const data = await res.json();
         allTracks.push(...data.items.filter(it => it.track && it.track.id).map(it => ({
           id: it.track.id,
