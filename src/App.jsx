@@ -454,39 +454,103 @@ function GenerateView({ token, onBack, onLogin }) {
       const marginX = (pageW - cols * cardW) / 2;
       const marginY = (pageH - rows * cardH) / 2;
 
-      for (let i = 0; i < tracks.length; i++) {
-        const t = tracks[i];
-        const indexInPage = i % cardsPerPage;
-        if (i > 0 && indexInPage === 0) pdf.addPage();
-        const col = indexInPage % cols;
-        const row = Math.floor(indexInPage / cols);
-        const x = marginX + col * cardW;
-        const y = marginY + row * cardH;
+      // Linhas de corte (pequenas marcas nos cantos das cartas para guiar o corte)
+      function drawCutMarks(p, x, y, w, h) {
+        p.setDrawColor(180);
+        p.setLineWidth(0.1);
+        const len = 3;
+        // 4 cantos: linha horizontal e vertical curtas
+        // canto superior esquerdo
+        p.line(x - len, y, x, y);
+        p.line(x, y - len, x, y);
+        // canto superior direito
+        p.line(x + w, y, x + w + len, y);
+        p.line(x + w, y - len, x + w, y);
+        // canto inferior esquerdo
+        p.line(x - len, y + h, x, y + h);
+        p.line(x, y + h, x, y + h + len);
+        // canto inferior direito
+        p.line(x + w, y + h, x + w + len, y + h);
+        p.line(x + w, y + h, x + w + len, y + h);
+        p.line(x + w, y + h, x + w, y + h + len);
+      }
 
-        pdf.setDrawColor(180);
-        pdf.roundedRect(x + 2, y + 2, cardW - 4, cardH - 4, 3, 3);
+      const totalPages = Math.ceil(tracks.length / cardsPerPage);
 
-        const qrUrl = `https://open.spotify.com/track/${t.id}`;
-        const qrDataURL = await QRCode.toDataURL(qrUrl, { width: 400, margin: 1 });
-        pdf.addImage(qrDataURL, "PNG", x + 10, y + 10, 40, 40);
+      for (let pageNum = 0; pageNum < totalPages; pageNum++) {
+        // ===== PÁGINA FRENTE (QR codes) =====
+        if (pageNum > 0) pdf.addPage();
 
-        pdf.setFontSize(8);
-        pdf.setTextColor(120);
-        pdf.text("DISCOTECA", x + cardW / 2, y + 58, { align: "center" });
-        pdf.setFontSize(7);
-        pdf.text(`#${i + 1}`, x + cardW / 2, y + 64, { align: "center" });
+        for (let slot = 0; slot < cardsPerPage; slot++) {
+          const trackIdx = pageNum * cardsPerPage + slot;
+          if (trackIdx >= tracks.length) break;
+          const t = tracks[trackIdx];
+          const col = slot % cols;
+          const row = Math.floor(slot / cols);
+          const x = marginX + col * cardW;
+          const y = marginY + row * cardH;
 
-        pdf.setFontSize(8);
-        pdf.setTextColor(40);
-        const nameLines = pdf.splitTextToSize(t.name, cardW - 10);
-        pdf.text(nameLines.slice(0, 2), x + cardW / 2, y + 70, { align: "center" });
-        pdf.setFontSize(7);
-        pdf.setTextColor(100);
-        const artistLines = pdf.splitTextToSize(t.artists, cardW - 10);
-        pdf.text(artistLines.slice(0, 1), x + cardW / 2, y + 76, { align: "center" });
-        pdf.setFontSize(11);
-        pdf.setTextColor(220, 30, 100);
-        pdf.text(String(t.year), x + cardW / 2, y + 82, { align: "center" });
+          drawCutMarks(pdf, x, y, cardW, cardH);
+
+          // QR code centrado
+          const qrUrl = `https://open.spotify.com/track/${t.id}`;
+          const qrDataURL = await QRCode.toDataURL(qrUrl, { width: 500, margin: 1 });
+          const qrSize = 45;
+          pdf.addImage(qrDataURL, "PNG", x + (cardW - qrSize) / 2, y + (cardH - qrSize) / 2 - 5, qrSize, qrSize);
+
+          // Logo pequeno no fundo
+          pdf.setFontSize(8);
+          pdf.setTextColor(150);
+          pdf.text("DISCOTECA", x + cardW / 2, y + cardH - 6, { align: "center" });
+          pdf.setFontSize(6);
+          pdf.setTextColor(180);
+          pdf.text(`#${trackIdx + 1}`, x + cardW / 2, y + cardH - 2, { align: "center" });
+        }
+
+        // ===== PÁGINA VERSO (textos, espelhada horizontalmente) =====
+        pdf.addPage();
+
+        for (let slot = 0; slot < cardsPerPage; slot++) {
+          const trackIdx = pageNum * cardsPerPage + slot;
+          if (trackIdx >= tracks.length) break;
+          const t = tracks[trackIdx];
+          const col = slot % cols;
+          const row = Math.floor(slot / cols);
+
+          // ESPELHAR horizontalmente: a coluna 0 da frente fica na coluna (cols-1) do verso
+          const mirroredCol = (cols - 1) - col;
+          const x = marginX + mirroredCol * cardW;
+          const y = marginY + row * cardH;
+
+          drawCutMarks(pdf, x, y, cardW, cardH);
+
+          // Ano grande, centrado
+          pdf.setFontSize(36);
+          pdf.setTextColor(220, 30, 100);
+          pdf.text(String(t.year), x + cardW / 2, y + 32, { align: "center" });
+
+          // Linha decorativa
+          pdf.setDrawColor(220, 30, 100);
+          pdf.setLineWidth(0.3);
+          pdf.line(x + 15, y + 38, x + cardW - 15, y + 38);
+
+          // Nome da música
+          pdf.setFontSize(10);
+          pdf.setTextColor(20);
+          const nameLines = pdf.splitTextToSize(t.name, cardW - 8);
+          pdf.text(nameLines.slice(0, 3), x + cardW / 2, y + 48, { align: "center" });
+
+          // Artista
+          pdf.setFontSize(8);
+          pdf.setTextColor(100);
+          const artistLines = pdf.splitTextToSize(t.artists, cardW - 8);
+          pdf.text(artistLines.slice(0, 2), x + cardW / 2, y + 62, { align: "center" });
+
+          // Logo pequeno no fundo
+          pdf.setFontSize(7);
+          pdf.setTextColor(150);
+          pdf.text("DISCOTECA", x + cardW / 2, y + cardH - 4, { align: "center" });
+        }
       }
 
       pdf.save("discoteca-cartas.pdf");
