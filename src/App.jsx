@@ -319,30 +319,86 @@ function GenerateView({ token, onBack, onLogin }) {
     }
     setLoading(true);
     try {
-      let allTracks = [];
-      let url = `https://api.spotify.com/v1/playlists/${id}/tracks?limit=100&fields=items(track(id,name,artists(name),album(release_date))),next`;
-      while (url) {
-        const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
-       if (!res.ok) {
-  const errorBody = await res.text();
-  throw new Error(`Spotify API ${res.status}: ${errorBody}`);
-}
-        const data = await res.json();
-        allTracks.push(...data.items.filter(it => it.track && it.track.id).map(it => ({
-          id: it.track.id,
-          name: it.track.name,
-          artists: it.track.artists.map(a => a.name).join(", "),
-          year: it.track.album.release_date ? it.track.album.release_date.slice(0, 4) : "?",
-        })));
-        url = data.next;
+      const allTracks = await fetchPlaylistTracks(id, token);
+      if (allTracks.length === 0) {
+        setError("A playlist parece estar vazia ou inacessível.");
+      } else {
+        setTracks(allTracks);
       }
-      setTracks(allTracks);
     } catch (e) {
       setError("Erro ao carregar playlist: " + e.message);
     } finally {
       setLoading(false);
     }
   };
+
+  // Tenta várias estratégias para contornar restrições da API
+  async function fetchPlaylistTracks(id, token) {
+    const headers = { Authorization: `Bearer ${token}` };
+
+    // Estratégia 1: endpoint /playlists/{id} (mais permissivo)
+    try {
+      const res = await fetch(`https://api.spotify.com/v1/playlists/${id}`, { headers });
+      if (res.ok) {
+        const data = await res.json();
+        const items = data.tracks?.items || [];
+        let tracks = items
+          .filter(it => it.track && it.track.id)
+          .map(it => mapTrack(it.track));
+        // Se tem mais páginas, tentar buscar o resto
+        let nextUrl = data.tracks?.next;
+        while (nextUrl) {
+          try {
+            const r2 = await fetch(nextUrl, { headers });
+            if (!r2.ok) break;
+            const d2 = await r2.json();
+            tracks.push(...(d2.items || [])
+              .filter(it => it.track && it.track.id)
+              .map(it => mapTrack(it.track)));
+            nextUrl = d2.next;
+          } catch { break; }
+        }
+        if (tracks.length > 0) return tracks;
+      }
+    } catch (e) { /* tentar próxima estratégia */ }
+
+    // Estratégia 2: endpoint /playlists/{id}/tracks (o tradicional)
+    try {
+      let allTracks = [];
+      let url = `https://api.spotify.com/v1/playlists/${id}/tracks?limit=100`;
+      while (url) {
+        const res = await fetch(url, { headers });
+        if (!res.ok) {
+          if (allTracks.length > 0) return allTracks;
+          const body = await res.text();
+          throw new Error(`${res.status} — ${body.slice(0, 200)}`);
+        }
+        const data = await res.json();
+        allTracks.push(...(data.items || [])
+          .filter(it => it.track && it.track.id)
+          .map(it => mapTrack(it.track)));
+        url = data.next;
+      }
+      return allTracks;
+    } catch (e) {
+      throw new Error(
+        `Não consegui aceder à playlist. O Spotify mudou regras em Nov 2024 e algumas playlists ficaram inacessíveis a apps em modo Development.\n\n` +
+        `Tenta:\n` +
+        `1) Criar uma playlist NOVA, pública, e copiar as músicas para lá\n` +
+        `2) Pedir Extension Request no Spotify Developer Dashboard\n\n` +
+        `Detalhe técnico: ${e.message}`
+      );
+    }
+  }
+
+  function mapTrack(track) {
+    return {
+      id: track.id,
+      name: track.name,
+      artists: track.artists.map(a => a.name).join(", "),
+      year: track.album?.release_date ? track.album.release_date.slice(0, 4) : "?",
+    };
+  }
 
   const generatePDF = async () => {
     setGeneratingPDF(true);
@@ -434,7 +490,7 @@ function GenerateView({ token, onBack, onLogin }) {
         </button>
       </div>
 
-      {error && <div className="px-4 py-3 rounded-lg bg-red-500/10 border border-red-400/30 text-red-200 text-sm">{error}</div>}
+      {error && <div className="px-4 py-3 rounded-lg bg-red-500/10 border border-red-400/30 text-red-200 text-sm whitespace-pre-line">{error}</div>}
 
       {tracks.length > 0 && (
         <div className="space-y-4">
@@ -728,7 +784,7 @@ function PlayView({ token, onBack, onLogin }) {
         )}
       </div>
 
-      {error && <div className="px-4 py-3 rounded-lg bg-red-500/10 border border-red-400/30 text-red-200 text-sm">{error}</div>}
+      {error && <div className="px-4 py-3 rounded-lg bg-red-500/10 border border-red-400/30 text-red-200 text-sm whitespace-pre-line">{error}</div>}
 
       {!scanning && !currentTrack && (
         <div className="text-center py-8">
